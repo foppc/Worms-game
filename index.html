@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mole Mayhem — Turn-Based Artillery</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game-wrap">
+    <canvas id="game" width="1000" height="600"></canvas>
+
+    <!-- Heads-up display -->
+    <div id="hud">
+      <div id="turn-info">
+        <span id="team-name">Team 1</span>
+        <span id="timer">--</span>
+      </div>
+      <div id="wind">Wind: <span id="wind-val">0</span></div>
+      <div id="weapon">Weapon: <span id="weapon-name">Bazooka</span></div>
+    </div>
+
+    <!-- Power meter -->
+    <div id="power-bar"><div id="power-fill"></div></div>
+
+    <!-- Start / message overlay -->
+    <div id="overlay">
+      <div class="panel">
+        <h1>Mole Mayhem</h1>
+        <p class="tagline">A turn-based artillery battle of burrowing rivals.</p>
+        <div class="controls">
+          <h3>Controls</h3>
+          <ul>
+            <li><b>← →</b> &nbsp; Walk your mole</li>
+            <li><b>↑ ↓</b> &nbsp; Aim the weapon</li>
+            <li><b>Space</b> (hold &amp; release) &nbsp; Fire with power</li>
+            <li><b>Enter</b> &nbsp; Jump</li>
+            <li><b>1–4</b> &nbsp; Select weapon</li>
+          </ul>
+        </div>
+        <div class="setup">
+          <label>Moles per team:
+            <select id="molecount">
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+        </div>
+        <button id="start-btn">Start Battle</button>
+      </div>
+    </div>
+
+    <div id="weapon-tray"></div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
