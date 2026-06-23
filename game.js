@@ -967,36 +967,60 @@
   }
 
   // ============================================================
-  //  Input handling
+  //  Input handling — shared by keyboard and on-screen touch buttons
   // ============================================================
-  window.addEventListener("keydown", (e) => {
-    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) {
-      e.preventDefault();
-    }
-    if (game.state !== "aiming" && game.state !== "retreat") {
-      // ignore gameplay keys outside active states
-    }
-    keys[e.code] = true;
-
-    if (e.code === "Space" && (game.state === "aiming")) {
+  function pressKey(code) {
+    keys[code] = true;
+    if (code === "Space" && game.state === "aiming") {
       if (!game.charging && activeMole()) {
         game.charging = true;
         game.power = 0;
         ui.powerBar.classList.add("active");
       }
     }
-    if (e.code === "Enter") jump();
-    if (e.code >= "Digit1" && e.code <= "Digit4") {
-      const idx = parseInt(e.code.replace("Digit", ""), 10) - 1;
+    if (code === "Enter") jump();
+    if (code.startsWith("Digit")) {
+      const idx = parseInt(code.slice(5), 10) - 1;
       if (idx >= 0 && idx < WEAPONS.length) selectWeapon(idx);
     }
+  }
+
+  function releaseKey(code) {
+    keys[code] = false;
+    if (code === "Space" && game.charging) fire();
+  }
+
+  window.addEventListener("keydown", (e) => {
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) {
+      e.preventDefault();
+    }
+    if (e.repeat) return; // OS key-repeat shouldn't re-trigger press logic
+    pressKey(e.code);
   });
 
-  window.addEventListener("keyup", (e) => {
-    keys[e.code] = false;
-    if (e.code === "Space" && game.charging) {
-      fire();
-    }
+  window.addEventListener("keyup", (e) => releaseKey(e.code));
+
+  // Wire up the touch / pointer control pads.
+  document.querySelectorAll("#touch-controls .tbtn").forEach((btn) => {
+    const code = btn.dataset.code;
+    const press = (e) => {
+      e.preventDefault();
+      btn.classList.add("held");
+      pressKey(code);
+    };
+    const release = (e) => {
+      e.preventDefault();
+      if (!btn.classList.contains("held")) return;
+      btn.classList.remove("held");
+      releaseKey(code);
+    };
+    btn.addEventListener("touchstart", press, { passive: false });
+    btn.addEventListener("touchend", release, { passive: false });
+    btn.addEventListener("touchcancel", release, { passive: false });
+    // Mouse fallback so the same buttons work on desktop too.
+    btn.addEventListener("mousedown", press);
+    btn.addEventListener("mouseup", release);
+    btn.addEventListener("mouseleave", release);
   });
 
   ui.startBtn.addEventListener("click", startGame);

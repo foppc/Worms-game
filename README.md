@@ -24,6 +24,8 @@ python3 -m http.server 8000
 
 ## Controls
 
+**Keyboard (desktop):**
+
 | Key | Action |
 | --- | --- |
 | **← →** | Walk your mole |
@@ -31,6 +33,24 @@ python3 -m http.server 8000
 | **Space** (hold & release) | Charge power and fire |
 | **Enter** | Jump |
 | **1 – 4** | Select weapon |
+
+**Touch (phones / tablets):** on-screen controls appear automatically — a
+D-pad on the left (◀ ▶ walk, ▲ ▼ aim), **FIRE** (hold to charge, release to
+shoot) and **JUMP** on the right, and the weapon icons up top to switch
+weapons. Landscape orientation gives you the most room.
+
+## Play on your phone
+
+The game is just static files, so any of these work:
+
+- **Same Wi-Fi:** run `python3 -m http.server 8000` on your computer, find its
+  local IP (e.g. `192.168.1.x`), and open `http://192.168.1.x:8000` in your
+  phone's browser.
+- **GitHub Pages:** enable Pages for this repo (Settings → Pages → deploy from
+  the branch) and open the published URL on your phone. No install needed.
+
+The layout auto-fits the screen and the touch controls stay anchored to the
+visible edges, so the whole battle is reachable with your thumbs.
 
 ## Features
 

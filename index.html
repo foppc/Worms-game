@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Mole Mayhem — Turn-Based Artillery</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -52,6 +52,22 @@
     </div>
 
     <div id="weapon-tray"></div>
+
+    <!-- On-screen touch controls (shown on touch devices) -->
+    <div id="touch-controls">
+      <div class="pad pad-left">
+        <button class="tbtn aim" data-code="ArrowUp" aria-label="Aim up">▲</button>
+        <div class="pad-row">
+          <button class="tbtn" data-code="ArrowLeft" aria-label="Walk left">◀</button>
+          <button class="tbtn" data-code="ArrowRight" aria-label="Walk right">▶</button>
+        </div>
+        <button class="tbtn aim" data-code="ArrowDown" aria-label="Aim down">▼</button>
+      </div>
+      <div class="pad pad-right">
+        <button class="tbtn jump" data-code="Enter" aria-label="Jump">JUMP</button>
+        <button class="tbtn fire" data-code="Space" aria-label="Hold to charge, release to fire">FIRE</button>
+      </div>
+    </div>
   </div>
 
   <script src="game.js"></script>
