@@ -7,6 +7,8 @@ characters, no copyrighted assets).
 Two teams take turns lobbing weapons across a randomly generated,
 **fully destructible** landscape. Last burrow standing wins.
 
+**▶ Play it now: https://foppc.github.io/Worms-game/** (works on desktop and phone)
+
 ![type: browser game](https://img.shields.io/badge/type-browser%20game-blue)
 ![deps: none](https://img.shields.io/badge/dependencies-none-brightgreen)
 
