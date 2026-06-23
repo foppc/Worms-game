@@ -53,6 +53,102 @@
   ];
 
   // ============================================================
+  //  Audio — tiny Web Audio synth (no asset files)
+  // ============================================================
+  const audio = (() => {
+    let ctx = null, master = null, muted = false;
+    let chargeOsc = null, chargeGain = null;
+
+    function ensure() {
+      if (!ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        try {
+          ctx = new AC();
+          master = ctx.createGain();
+          master.gain.value = 0.4;
+          master.connect(ctx.destination);
+        } catch (e) { ctx = null; }
+      }
+      // Browsers (esp. mobile) start the context suspended until a gesture.
+      if (ctx && ctx.state === "suspended") ctx.resume();
+      return ctx;
+    }
+
+    function tone(freq, dur, type, vol, slideTo) {
+      if (muted || !ensure()) return;
+      const t = ctx.currentTime;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = type || "sine";
+      o.frequency.setValueAtTime(freq, t);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol || 0.3, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(master);
+      o.start(t); o.stop(t + dur + 0.03);
+    }
+
+    function noise(dur, vol, filterFreq, type) {
+      if (muted || !ensure()) return;
+      const t = ctx.currentTime;
+      const n = Math.max(1, Math.floor(ctx.sampleRate * dur));
+      const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const f = ctx.createBiquadFilter();
+      f.type = type || "lowpass"; f.frequency.value = filterFreq || 800;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol || 0.5, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(f); f.connect(g); g.connect(master);
+      src.start(t); src.stop(t + dur);
+    }
+
+    return {
+      ensure,
+      setMuted(v) { muted = v; if (v) this.chargeStop(); },
+      isMuted() { return muted; },
+      shoot() { tone(440, 0.18, "sawtooth", 0.22, 130); noise(0.14, 0.16, 1400); },
+      explosion(size) {
+        const s = Math.min(2, size / 36);
+        noise(0.55 * s, 0.8, 600);
+        tone(110, 0.5 * s, "sine", 0.55, 38);
+        tone(70, 0.45 * s, "triangle", 0.4, 30);
+      },
+      bounce() { tone(320, 0.07, "square", 0.1, 200); },
+      jump() { tone(260, 0.14, "sine", 0.16, 540); },
+      hit() { tone(180, 0.16, "square", 0.18, 80); noise(0.12, 0.2, 1000); },
+      win() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.32, "triangle", 0.3), i * 150)); },
+      chargeStart() {
+        if (muted || !ensure()) return;
+        this.chargeStop();
+        chargeOsc = ctx.createOscillator();
+        chargeGain = ctx.createGain();
+        chargeOsc.type = "sawtooth";
+        chargeOsc.frequency.value = 180;
+        chargeGain.gain.value = 0.0001;
+        chargeGain.gain.exponentialRampToValueAtTime(0.1, ctx.currentTime + 0.05);
+        chargeOsc.connect(chargeGain); chargeGain.connect(master);
+        chargeOsc.start();
+      },
+      chargeUpdate(power) {
+        if (chargeOsc && ctx) chargeOsc.frequency.setTargetAtTime(180 + power * 720, ctx.currentTime, 0.04);
+      },
+      chargeStop() {
+        if (chargeOsc && ctx) {
+          const o = chargeOsc, g = chargeGain;
+          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05);
+          o.stop(ctx.currentTime + 0.09);
+        }
+        chargeOsc = null; chargeGain = null;
+      },
+    };
+  })();
+
+  // ============================================================
   //  Terrain  — per-pixel destructible mask + offscreen canvas
   // ============================================================
   const terrainCanvas = document.createElement("canvas");
@@ -95,12 +191,7 @@
       }
     }
 
-    // Texture: dirt gradient + grass cap.
-    const grad = terrainCtx.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, "#6b4a2b");
-    grad.addColorStop(0.4, "#5a3d22");
-    grad.addColorStop(1, "#3e2a16");
-    // Draw dirt where solid by stamping columns.
+    // Per-pixel texture: layered grass cap over noisy dirt with rock specks.
     const img = terrainCtx.createImageData(W, H);
     const data = img.data;
     for (let x = 0; x < W; x++) {
@@ -109,17 +200,40 @@
         const i = (y * W + x) * 4;
         const depth = y - top;
         let r, g, b;
-        if (depth < 6) { r = 86; g = 160; b = 58; }        // grass
-        else if (depth < 9) { r = 60; g = 110; b = 40; }   // grass shadow
-        else {
-          // dirt with subtle noise
-          const n = (Math.sin(x * 0.3) + Math.cos(y * 0.27)) * 8;
-          r = 96 + n; g = 64 + n; b = 38 + n;
+        if (depth < 5) {              // bright grass
+          r = 104; g = 178; b = 66;
+        } else if (depth < 9) {       // grass blend
+          r = 74; g = 132; b = 48;
+        } else if (depth < 13) {      // soil just under grass
+          r = 110; g = 78; b = 46;
+        } else {
+          // Dirt with multi-frequency noise so it isn't flat.
+          const n = (Math.sin(x * 0.25 + y * 0.13) + Math.cos(y * 0.31 - x * 0.05)) * 9;
+          const deepen = Math.min(34, depth * 0.08);
+          r = 96 + n - deepen; g = 66 + n - deepen; b = 40 + n - deepen;
+          // Occasional rock/pebble speck.
+          const speck = Math.sin(x * 1.7) * Math.cos(y * 1.3);
+          if (speck > 0.93) { r += 28; g += 26; b += 22; }
+          else if (speck < -0.95) { r -= 18; g -= 14; b -= 10; }
         }
         data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255;
       }
     }
     terrainCtx.putImageData(img, 0, 0);
+
+    // Grass blades along the surface for a tufted edge.
+    terrainCtx.strokeStyle = "rgba(120,196,74,0.9)";
+    terrainCtx.lineWidth = 1;
+    for (let x = 2; x < W; x += 3) {
+      const top = Math.max(20, Math.min(H - 10, profile[x] | 0));
+      if (top >= H - 10) continue;
+      const h = 2 + ((x * 7) % 4);
+      const lean = ((x * 13) % 3) - 1;
+      terrainCtx.beginPath();
+      terrainCtx.moveTo(x + 0.5, top + 1);
+      terrainCtx.lineTo(x + 0.5 + lean, top - h);
+      terrainCtx.stroke();
+    }
   }
 
   // Carve a circular crater out of the terrain (explosion).
@@ -172,11 +286,14 @@
     power: 0,
     projectiles: [],
     particles: [],
+    shockwaves: [],   // expanding rings from explosions
+    screenFlash: 0,   // white flash intensity (0..1) after a blast
     lastTs: 0,
     timerAcc: 0,
     settleAcc: 0,
     cameraShake: 0,
     winner: null,
+    time: 0,          // accumulated seconds (for animations)
   };
 
   const keys = Object.create(null);
@@ -222,12 +339,14 @@
     game.weaponIdx = 0;
     game.projectiles = [];
     game.particles = [];
+    game.shockwaves = [];
+    game.screenFlash = 0;
     game.winner = null;
     ui.overlay.classList.add("hidden");
     buildTray();
     beginTurn(true);
-    game.lastTs = performance.now();
-    requestAnimationFrame(loop);
+    audio.ensure();   // unlock audio within the start-click gesture
+    startLoop();
   }
 
   function makeMole(team, x, y, num) {
@@ -322,15 +441,36 @@
     game.charging = false;
     game.power = 0;
     ui.powerBar.classList.remove("active");
+    audio.chargeStop();
+    audio.shoot();
+    // Muzzle flash + smoke puff.
+    spawnMuzzle(px, py, ang);
     endTurnSoon();
+  }
+
+  function spawnMuzzle(x, y, ang) {
+    for (let i = 0; i < 8; i++) {
+      const a = ang + (Math.random() - 0.5) * 0.8;
+      const sp = 1.5 + Math.random() * 3;
+      game.particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 0.18 + Math.random() * 0.18, max: 0.36,
+        r: 1.5 + Math.random() * 2.5, kind: "fire",
+      });
+    }
   }
 
   function explode(x, y, wpn) {
     carve(x, y, wpn.radius);
-    game.cameraShake = Math.min(18, wpn.radius * 0.4);
+    game.cameraShake = Math.min(22, wpn.radius * 0.5);
     spawnExplosionParticles(x, y, wpn.radius);
+    // Visual punch: an expanding shockwave ring + a brief screen flash.
+    game.shockwaves.push({ x, y, r: wpn.radius * 0.3, max: wpn.radius * 1.9, life: 1, max_life: 0.45 });
+    game.screenFlash = Math.min(0.9, game.screenFlash + wpn.radius / 70);
+    audio.explosion(wpn.radius);
 
     // Damage + knockback to moles in radius.
+    let anyHit = false;
     for (const m of game.moles) {
       if (m.hp <= 0) continue;
       const dx = m.x - x, dy = m.y - y;
@@ -339,6 +479,7 @@
       if (dist < reach) {
         const falloff = 1 - dist / reach;
         const dmg = Math.round(wpn.damage * falloff);
+        if (dmg > 0) anyHit = true;
         m.hp = Math.max(0, m.hp - dmg);
         m.flash = 0.4;
         const force = (wpn.radius / 30) * (0.6 + falloff) * 6;
@@ -348,24 +489,48 @@
         m.onGround = false;
       }
     }
+    if (anyHit) audio.hit();
   }
 
   // ============================================================
   //  Particles
   // ============================================================
   function spawnExplosionParticles(x, y, r) {
-    const n = Math.floor(r * 1.4);
-    for (let i = 0; i < n; i++) {
+    // Fireball: fast outward fire particles.
+    const fire = Math.floor(r * 1.3);
+    for (let i = 0; i < fire; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = Math.random() * (r * 0.18);
+      const sp = Math.random() * (r * 0.22);
       game.particles.push({
         x, y,
         vx: Math.cos(a) * sp,
-        vy: Math.sin(a) * sp - 1,
-        life: 0.5 + Math.random() * 0.6,
-        max: 1.1,
-        r: 1 + Math.random() * 3,
-        kind: Math.random() < 0.5 ? "fire" : "smoke",
+        vy: Math.sin(a) * sp - 1.2,
+        life: 0.35 + Math.random() * 0.5, max: 0.85,
+        r: 2 + Math.random() * 3.5, kind: "fire",
+      });
+    }
+    // Smoke: slower, rising, longer-lived.
+    const smoke = Math.floor(r * 0.7);
+    for (let i = 0; i < smoke; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = Math.random() * (r * 0.08);
+      game.particles.push({
+        x, y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 1.6,
+        life: 0.8 + Math.random() * 0.9, max: 1.7,
+        r: 3 + Math.random() * 4, kind: "smoke",
+      });
+    }
+    // Debris dirt clods flung out.
+    const debris = Math.floor(r * 0.4);
+    for (let i = 0; i < debris; i++) {
+      const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.4;
+      const sp = 2 + Math.random() * (r * 0.12);
+      game.particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 0.5 + Math.random() * 0.5, max: 1.0,
+        r: 1.5 + Math.random() * 2.5, kind: "dirt",
       });
     }
   }
@@ -497,6 +662,7 @@
     p.x += n.x * 2;
     p.y += n.y * 2;
     spawnDirt(p.x, p.y);
+    audio.bounce();
   }
 
   // Approximate surface normal by sampling solidity around a point.
@@ -536,18 +702,40 @@
   // ============================================================
   //  Main loop
   // ============================================================
+  let loopRunning = false;
   function loop(ts) {
+    // Reschedule FIRST so a single bad frame can never freeze the screen.
+    requestAnimationFrame(loop);
     const dt = Math.min(0.05, (ts - game.lastTs) / 1000);
     game.lastTs = ts;
-    update(dt);
-    render();
+    try {
+      update(dt);
+      render();
+    } catch (err) {
+      if (!loop._warned) { console.error("Frame error (loop continues):", err); loop._warned = true; }
+    }
+  }
+  function startLoop() {
+    if (loopRunning) return;
+    loopRunning = true;
+    game.lastTs = performance.now();
     requestAnimationFrame(loop);
   }
 
   function update(dt) {
-    // Decay camera shake & flashes.
+    game.time += dt;
+    // Decay camera shake, screen flash & hit-flashes.
     if (game.cameraShake > 0) game.cameraShake = Math.max(0, game.cameraShake - dt * 30);
+    if (game.screenFlash > 0) game.screenFlash = Math.max(0, game.screenFlash - dt * 3.2);
     for (const m of game.moles) if (m.flash > 0) m.flash = Math.max(0, m.flash - dt);
+
+    // Expand & fade shockwave rings.
+    for (let i = game.shockwaves.length - 1; i >= 0; i--) {
+      const s = game.shockwaves[i];
+      s.life -= dt / s.max_life;
+      s.r += (s.max - s.r) * Math.min(1, dt * 9);
+      if (s.life <= 0) game.shockwaves.splice(i, 1);
+    }
 
     // Player input (only during aiming/retreat with active mole).
     if (game.state === "aiming" || game.state === "retreat") {
@@ -576,6 +764,7 @@
     if (game.charging) {
       game.power = Math.min(1, game.power + dt * 0.85);
       ui.powerFill.style.width = (game.power * 100) + "%";
+      audio.chargeUpdate(game.power);
       if (game.power >= 1) fire();
     }
 
@@ -676,12 +865,31 @@
     m.vy = JUMP_VY;
     m.vx = m.facing * 2.6;
     m.onGround = false;
+    audio.jump();
   }
 
   // ============================================================
   //  Rendering
   // ============================================================
+  // Cached sky gradient (rebuilt lazily).
+  let skyGrad = null;
+  function getSky() {
+    if (!skyGrad) {
+      skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+      skyGrad.addColorStop(0, "#0e2a52");
+      skyGrad.addColorStop(0.45, "#2f6aa6");
+      skyGrad.addColorStop(0.8, "#6aa6cf");
+      skyGrad.addColorStop(1, "#bfe0e8");
+    }
+    return skyGrad;
+  }
+
   function render() {
+    // ---- Clear & paint the sky EVERY frame (this is the refresh fix) ----
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = getSky();
+    ctx.fillRect(0, 0, W, H);
+
     ctx.save();
     // Camera shake.
     if (game.cameraShake > 0) {
@@ -691,7 +899,7 @@
       );
     }
 
-    // Sky already via CSS background; draw distant hills + clouds.
+    // Sun, parallax hills, clouds.
     drawBackground();
 
     // Terrain.
@@ -711,98 +919,203 @@
     // Projectiles.
     for (const p of game.projectiles) drawProjectile(p);
 
-    // Particles.
+    // Explosion shockwave rings.
+    for (const s of game.shockwaves) drawShockwave(s);
+
+    // Particles (fire/smoke/dirt).
     for (const pt of game.particles) drawParticle(pt);
 
     // Wind streaks indicator near top.
     drawWindArrow();
 
     ctx.restore();
+
+    // Full-screen white flash on big blasts.
+    if (game.screenFlash > 0.01) {
+      ctx.fillStyle = `rgba(255,245,220,${game.screenFlash * 0.5})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // Subtle vignette for depth.
+    drawVignette();
   }
 
-  let cloudOffset = 0;
+  let vignette = null;
+  function drawVignette() {
+    if (!vignette) {
+      vignette = ctx.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, H * 0.95);
+      vignette.addColorStop(0, "rgba(0,0,0,0)");
+      vignette.addColorStop(1, "rgba(0,0,0,0.28)");
+    }
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawShockwave(s) {
+    const a = Math.max(0, s.life);
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,230,180,${a * 0.6})`;
+    ctx.lineWidth = 2 + a * 3;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawBackground() {
-    cloudOffset += 0.15;
-    // Far hills.
-    ctx.fillStyle = "rgba(30, 60, 90, 0.5)";
+    const t = game.time;
+
+    // Sun with a soft glow.
+    const sx = W * 0.82, sy = H * 0.2;
+    const glow = ctx.createRadialGradient(sx, sy, 8, sx, sy, 140);
+    glow.addColorStop(0, "rgba(255,247,214,0.95)");
+    glow.addColorStop(0.25, "rgba(255,240,190,0.45)");
+    glow.addColorStop(1, "rgba(255,240,190,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(sx - 150, sy - 150, 300, 300);
+    ctx.fillStyle = "#fff7d6";
+    ctx.beginPath();
+    ctx.arc(sx, sy, 26, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Far parallax hill layer.
+    ctx.fillStyle = "#3f6f8e";
     ctx.beginPath();
     ctx.moveTo(0, H);
-    for (let x = 0; x <= W; x += 20) {
-      ctx.lineTo(x, H * 0.55 + Math.sin(x * 0.01 + 1) * 30);
+    for (let x = 0; x <= W; x += 16) {
+      ctx.lineTo(x, H * 0.5 + Math.sin(x * 0.006 + 0.6) * 36 + Math.sin(x * 0.02) * 8);
     }
     ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
 
-    // Clouds.
-    ctx.fillStyle = "rgba(255,255,255,0.16)";
+    // Nearer parallax hill layer.
+    ctx.fillStyle = "#356070";
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (let x = 0; x <= W; x += 16) {
+      ctx.lineTo(x, H * 0.62 + Math.sin(x * 0.009 + 2.2) * 30);
+    }
+    ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+
+    // Drifting clouds.
     for (let i = 0; i < 4; i++) {
-      const cx = ((i * 280 + cloudOffset) % (W + 160)) - 80;
-      const cy = 60 + i * 28;
-      drawCloud(cx, cy, 36 + i * 6);
+      const speed = 6 + i * 3;
+      const cx = ((i * 300 + t * speed) % (W + 200)) - 100;
+      const cy = 55 + i * 26;
+      drawCloud(cx, cy, 34 + i * 7);
     }
   }
   function drawCloud(x, y, r) {
+    ctx.save();
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.arc(x + r * 0.8, y + 6, r * 0.7, 0, Math.PI * 2);
-    ctx.arc(x - r * 0.8, y + 8, r * 0.6, 0, Math.PI * 2);
+    ctx.arc(x + r * 0.85, y + 6, r * 0.72, 0, Math.PI * 2);
+    ctx.arc(x - r * 0.85, y + 8, r * 0.62, 0, Math.PI * 2);
+    ctx.arc(x + r * 0.2, y - r * 0.5, r * 0.6, 0, Math.PI * 2);
     ctx.fill();
+    // Soft shadow underside.
+    ctx.fillStyle = "rgba(200,210,225,0.5)";
+    ctx.beginPath();
+    ctx.ellipse(x, y + r * 0.5, r * 1.4, r * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   function drawMole(m) {
     const team = TEAMS[m.team];
     const isActive = m === activeMole() &&
       (game.state === "aiming" || game.state === "retreat");
+
+    // Ground shadow.
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    ctx.beginPath();
+    ctx.ellipse(m.x, m.y + MOLE_R, MOLE_R * 1.0, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
     ctx.save();
     ctx.translate(m.x, m.y);
 
-    // Active indicator arrow.
+    // Active indicator arrow (bobbing).
     if (isActive) {
-      const bob = Math.sin(performance.now() / 200) * 2;
-      ctx.fillStyle = "#f1c40f";
+      const bob = Math.sin(game.time * 5) * 2;
+      ctx.fillStyle = "#ffd23f";
+      ctx.strokeStyle = "rgba(0,0,0,0.3)";
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(0, -MOLE_R - 18 + bob);
-      ctx.lineTo(-6, -MOLE_R - 26 + bob);
-      ctx.lineTo(6, -MOLE_R - 26 + bob);
+      ctx.moveTo(0, -MOLE_R - 16 + bob);
+      ctx.lineTo(-6, -MOLE_R - 25 + bob);
+      ctx.lineTo(6, -MOLE_R - 25 + bob);
       ctx.closePath();
-      ctx.fill();
+      ctx.fill(); ctx.stroke();
     }
 
-    // Body (rounded). Flash white when hit.
-    const bodyColor = m.flash > 0 ? "#ffffff" : "#5b4636";
-    ctx.fillStyle = bodyColor;
+    // Body with soft shading (radial gradient), white flash when hit.
+    if (m.flash > 0) {
+      ctx.fillStyle = "#ffffff";
+    } else {
+      const bg = ctx.createRadialGradient(-3, -4, 2, 0, 0, MOLE_R + 2);
+      bg.addColorStop(0, "#7a6049");
+      bg.addColorStop(1, "#4a3829");
+      ctx.fillStyle = bg;
+    }
     ctx.beginPath();
     ctx.ellipse(0, 0, MOLE_R, MOLE_R + 1, 0, 0, Math.PI * 2);
     ctx.fill();
+    // Outline.
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
 
-    // Belly (team color).
+    // Belly (team color) as an ID patch.
     ctx.fillStyle = m.flash > 0 ? "#ffd5cf" : team.color;
     ctx.beginPath();
-    ctx.ellipse(0, 3, MOLE_R * 0.6, MOLE_R * 0.7, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 4, MOLE_R * 0.58, MOLE_R * 0.66, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ears.
+    ctx.fillStyle = m.flash > 0 ? "#ffffff" : "#3f3022";
+    ctx.beginPath();
+    ctx.arc(-MOLE_R * 0.55, -MOLE_R * 0.7, 2.6, 0, Math.PI * 2);
+    ctx.arc(MOLE_R * 0.55, -MOLE_R * 0.7, 2.6, 0, Math.PI * 2);
     ctx.fill();
 
     // Snout.
-    ctx.fillStyle = "#d98ba0";
+    ctx.fillStyle = "#e2a0b4";
     ctx.beginPath();
-    ctx.ellipse(m.facing * (MOLE_R - 2), 1, 5, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(m.facing * (MOLE_R - 2), 2, 5.5, 4.5, 0, 0, Math.PI * 2);
     ctx.fill();
     // Nose tip.
-    ctx.fillStyle = "#b35c77";
+    ctx.fillStyle = "#c1657f";
     ctx.beginPath();
-    ctx.arc(m.facing * (MOLE_R + 1), 1, 2, 0, Math.PI * 2);
+    ctx.arc(m.facing * (MOLE_R + 1.5), 2, 2.2, 0, Math.PI * 2);
     ctx.fill();
-
-    // Eyes (little dots).
-    ctx.fillStyle = "#1a120c";
+    // Whiskers.
+    ctx.strokeStyle = "rgba(20,12,8,0.5)";
+    ctx.lineWidth = 0.7;
     ctx.beginPath();
-    ctx.arc(m.facing * 3, -3, 1.6, 0, Math.PI * 2);
+    ctx.moveTo(m.facing * (MOLE_R + 1), 1); ctx.lineTo(m.facing * (MOLE_R + 7), -1);
+    ctx.moveTo(m.facing * (MOLE_R + 1), 3); ctx.lineTo(m.facing * (MOLE_R + 7), 4);
+    ctx.stroke();
+
+    // Eye (with highlight).
+    ctx.fillStyle = "#15100a";
+    ctx.beginPath();
+    ctx.arc(m.facing * 3.5, -3, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath();
+    ctx.arc(m.facing * 4.2, -3.7, 0.7, 0, Math.PI * 2);
     ctx.fill();
 
     // Claws.
-    ctx.strokeStyle = "#e8e8e8";
+    ctx.strokeStyle = "#f0f0f0";
     ctx.lineWidth = 1.6;
+    ctx.lineCap = "round";
     ctx.beginPath();
     ctx.moveTo(m.facing * 4, MOLE_R - 1);
-    ctx.lineTo(m.facing * 7, MOLE_R + 3);
+    ctx.lineTo(m.facing * 7.5, MOLE_R + 3);
     ctx.moveTo(m.facing * 1, MOLE_R - 1);
     ctx.lineTo(m.facing * 2, MOLE_R + 4);
     ctx.stroke();
@@ -863,21 +1176,30 @@
     }
     // Body.
     let color = "#333";
-    if (p.wpn.type === "grenade") color = "#2c3e1f";
-    else if (p.wpn.type === "dynamite") color = "#b03a2e";
-    else if (p.wpn.type === "shard") color = "#777";
+    if (p.wpn.type === "grenade") color = "#33491f";
+    else if (p.wpn.type === "dynamite") color = "#c0392b";
+    else if (p.wpn.type === "shard") color = "#888";
+    const rad = p.wpn.type === "dynamite" ? 5 : 4;
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, p.wpn.type === "dynamite" ? 5 : 4, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Highlight.
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.beginPath();
+    ctx.arc(p.x - rad * 0.35, p.y - rad * 0.35, rad * 0.3, 0, Math.PI * 2);
     ctx.fill();
 
     // Blinking fuse light for timed weapons.
     if (p.wpn.fuse > 0) {
-      const blink = Math.sin(performance.now() / 80) > 0;
+      const blink = Math.sin(game.time * 26) > 0;
       if (blink) {
         ctx.fillStyle = "#ff5a3c";
         ctx.beginPath();
-        ctx.arc(p.x, p.y - 5, 2, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y - rad - 2, 2.2, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -886,14 +1208,27 @@
 
   function drawParticle(pt) {
     const a = Math.max(0, pt.life / pt.max);
-    let c;
-    if (pt.kind === "fire") c = `rgba(255,${120 + Math.random() * 80 | 0},40,${a})`;
-    else if (pt.kind === "smoke") c = `rgba(90,90,90,${a * 0.6})`;
-    else c = `rgba(110,75,45,${a})`;
-    ctx.fillStyle = c;
-    ctx.beginPath();
-    ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2);
-    ctx.fill();
+    if (pt.kind === "fire") {
+      // Hot core fading to orange/red as it dies (additive glow).
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const g = 120 + (a * 130 | 0);
+      ctx.fillStyle = `rgba(255,${g},40,${a})`;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.r * (0.6 + a), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (pt.kind === "smoke") {
+      ctx.fillStyle = `rgba(70,68,66,${a * 0.5})`;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.r * (1.4 - a * 0.6), 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = `rgba(110,75,45,${a})`;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   function drawWindArrow() {
@@ -957,6 +1292,7 @@
     let msg;
     if (game.winner === -1) msg = "It's a draw — everyone burrowed out!";
     else msg = `${TEAMS[game.winner].name} win the burrow!`;
+    if (game.winner !== -1) audio.win();
     ui.overlay.classList.remove("hidden");
     ui.overlay.querySelector(".panel").innerHTML = `
       <h1>${game.winner === -1 ? "Draw!" : "Victory!"}</h1>
@@ -971,11 +1307,13 @@
   // ============================================================
   function pressKey(code) {
     keys[code] = true;
+    audio.ensure();   // unlock/resume audio on first interaction
     if (code === "Space" && game.state === "aiming") {
       if (!game.charging && activeMole()) {
         game.charging = true;
         game.power = 0;
         ui.powerBar.classList.add("active");
+        audio.chargeStart();
       }
     }
     if (code === "Enter") jump();
@@ -1025,6 +1363,17 @@
 
   ui.startBtn.addEventListener("click", startGame);
 
+  // Mute toggle.
+  const muteBtn = document.getElementById("mute-btn");
+  if (muteBtn) {
+    muteBtn.addEventListener("click", () => {
+      const next = !audio.isMuted();
+      audio.setMuted(next);
+      muteBtn.textContent = next ? "🔇" : "🔊";
+      audio.ensure();
+    });
+  }
+
   // Lightweight read-only hook for automated testing / debugging.
   window.__moleTest = () => {
     let solid = 0;
@@ -1039,15 +1388,8 @@
     };
   };
 
-  // Draw a static menu backdrop so the canvas isn't blank behind overlay.
+  // Generate an initial landscape for the menu backdrop, then run the
+  // single hardened render loop for the whole lifetime of the page.
   generateTerrain();
-  function menuFrame() {
-    if (game.state === "menu") {
-      ctx.clearRect(0, 0, W, H);
-      drawBackground();
-      ctx.drawImage(terrainCanvas, 0, 0);
-      requestAnimationFrame(menuFrame);
-    }
-  }
-  menuFrame();
+  startLoop();
 })();
