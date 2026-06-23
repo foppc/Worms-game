@@ -1001,6 +1001,20 @@
 
   ui.startBtn.addEventListener("click", startGame);
 
+  // Lightweight read-only hook for automated testing / debugging.
+  window.__moleTest = () => {
+    let solid = 0;
+    for (let i = 0; i < mask.length; i++) if (mask[i]) solid++;
+    return {
+      state: game.state,
+      teamTurn: game.teamTurn,
+      moles: game.moles.map((m) => ({ team: m.team, hp: m.hp, x: Math.round(m.x), y: Math.round(m.y) })),
+      projectiles: game.projectiles.length,
+      solidPixels: solid,
+      wind: game.wind,
+    };
+  };
+
   // Draw a static menu backdrop so the canvas isn't blank behind overlay.
   generateTerrain();
   function menuFrame() {
